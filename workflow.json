@@ -1,0 +1,282 @@
+{
+  "name": "Papers",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "629f89db-f664-42e9-80cc-6a8e26253850",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.yourdomain.com/api/v1/lists/LIST_ID/bookmarks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "af0d8654-8cac-4e82-b563-07b5a66a8337",
+      "name": "Get Bookmarks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        208,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "AUTH_KEY",
+          "name": "Karakeep"
+        },
+        "httpBearerAuth": {
+          "id": "AUTH_KEY",
+          "name": "Karakeep"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "bookmarks",
+        "options": {}
+      },
+      "id": "c6361861-754e-4b84-8f5c-bd3df5b69f66",
+      "name": "Split Items",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://r.jina.ai/{{ $json.content.sourceUrl }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "6772e320-819e-455c-a986-59a6eaf16e51",
+      "name": "Fetch via Jina",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        800,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "AUTH_KEY",
+          "name": "Jina AI"
+        },
+        "httpBearerAuth": {
+          "id": "AUTH_KEY",
+          "name": "Jina AI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Extract the Title for the filename\nconst content = $input.item.json.data;\nconst titleMatch = content.match(/^Title: (.*)$/m);\nlet title = titleMatch ? titleMatch[1] : 'Untitled_Bookmark';\n\n// 2. Sanitize Title for Linux Filesystem (remove / : etc)\ntitle = title.replace(/[\\/\\\\:*?\"<>|]/g, \"\");\n\n// 3. Return data for next node\nreturn {\n  json: {\n    jina_content: content,\n    clean_title: title\n  }\n};"
+      },
+      "id": "4980f9ab-5394-48f3-acd4-3db6f528bb10",
+      "name": "Extract Title",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1008,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8080/chat,
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "AUTH_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"prompts\": [\n    {\n      \"userInput\": {{ JSON.stringify($json.jina_content) }},\n      \"vendor\": \"OpenRouter\",\n      \"model\": \"x-ai/grok-4.1-fast:free\",\n      \"patternName\": \"analyze_paper\",\n      \"strategyName\": \"chain_of_thought\",\n      \"variables\": {\n        \"role\": \"expert\",\n        \"points\": \"5\"\n      }\n    }\n  ],\n  \"language\": \"en\",\n  \"temperature\": 0.7,\n  \"topP\": 0.9,\n  \"frequencyPenalty\": 0.0,\n  \"presencePenalty\": 0.0,\n  \"thinking\": \"medium\"\n}",
+        "options": {}
+      },
+      "id": "97fbf64c-277b-4084-9231-8a39aaca1d07",
+      "name": "Send to Fabric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fabric returns Server Sent Events (SSE)\n// We must parse the \"data: {...}\" lines to reconstruct the markdown\n\nconst rawData = $input.item.json.data;\nconst lines = rawData.split('\\n');\nlet fullMarkdown = '';\n\nfor (const line of lines) {\n  if (line.startsWith('data: ')) {\n    try {\n      const jsonStr = line.substring(6); // Remove \"data: \"\n      const chunk = JSON.parse(jsonStr);\n      \n      if (chunk.type === 'content') {\n        fullMarkdown += chunk.content;\n      }\n    } catch (e) {\n      // Ignore parse errors on keep-alive lines or empty lines\n    }\n  }\n}\n\n// Convert the final markdown to binary (Base64)\nconst binaryData = Buffer.from(fullMarkdown, 'utf8').toString('base64');\n\nreturn {\n  json: {\n    filename: $input.item.json.clean_title\n  },\n  binary: {\n    data: {\n      data: binaryData,\n      mimeType: 'text/markdown',\n      fileName: $input.item.json.clean_title + '.md'\n    }\n  }\n};\n"
+      },
+      "id": "83dbd9d2-01b4-4716-850a-a0d380c46c1c",
+      "name": "Parse SSE Stream",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/path/to/obsidian/ {{ $('Extract Title').item.json.clean_title }}.md",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1616,
+        0
+      ],
+      "id": "efbefeeb-ffdb-4120-85e3-6877f3773465",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "dedupeValue": "={{ $json.content.sourceUrl }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        608,
+        0
+      ],
+      "id": "dbee1958-56a0-419c-93a0-ba25f75e0522",
+      "name": "Remove Duplicates"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Bookmarks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Bookmarks": {
+      "main": [
+        [
+          {
+            "node": "Split Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch via Jina": {
+      "main": [
+        [
+          {
+            "node": "Extract Title",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Title": {
+      "main": [
+        [
+          {
+            "node": "Send to Fabric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Fabric": {
+      "main": [
+        [
+          {
+            "node": "Parse SSE Stream",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse SSE Stream": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Items": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        []
+      ]
+    },
+    "Remove Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Fetch via Jina",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  
+}
